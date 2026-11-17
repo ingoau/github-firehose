@@ -1,5 +1,5 @@
 // Issue Firehose: serves the static page and a cached /latest endpoint with the newest public GitHub issues.
-const CACHE_SECONDS = 10;
+const CACHE_SECONDS = 5;
 
 const QUERY = `{ search(query: "is:issue sort:created-desc", type: ISSUE, first: 100) {
   nodes { ... on Issue { id title url repository { nameWithOwner } } }

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Issue Firehose</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #fff; }
+  body { font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  /* Fade everything out toward the bottom of the screen. */
+  #feed { margin: 0 auto; padding: 40px 16px 0; max-width: 760px; height: 100%; overflow: hidden;
+    -webkit-mask-image: linear-gradient(#000 25%, transparent 95%); mask-image: linear-gradient(#000 25%, transparent 95%); }
+  #list { will-change: transform; }
+  .li { opacity: 1; transition: opacity .5s ease; }
+  .li.enter { opacity: 0; }
+  .li a { display: block; padding: 9px 0; color: inherit; text-decoration: none; }
+  .repo { font-size: 12px; color: #666; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .title { overflow-wrap: anywhere; }
+  .li a:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+  .corner { position: fixed; right: 16px; z-index: 1; color: #888; font-size: 12px; text-decoration: none;
+    font-family: ui-monospace, Menlo, Consolas, monospace; }
+  h1.corner { top: 12px; margin: 0; font-weight: 400; color: #fff; }
+  a.corner { bottom: 12px; }
+  a.corner:hover { color: #fff; }
+</style>
+</head>
+<body>
+<h1 class="corner">Issue Firehose</h1>
+<div id="feed"><div id="list"></div></div>
+<a class="corner" href="https://github.com/ingoau/issue-firehose" target="_blank" rel="noopener">source code</a>
+<script>
+const feed = document.getElementById("list");
+const SLIDE_MS = 550;
+const queue = [];
+const POLL_MS = 10000;
+const seen = new Set();
+let interval = POLL_MS;
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function make(i) {
+  const li = document.createElement("div");
+  li.className = "li";
+  li.innerHTML = `<div><a href="${esc(i.url)}" target="_blank" rel="noopener">
+    <div class="repo">${esc(i.repo)}</div><div class="title">${esc(i.title)}</div></a></div>`;
+  return li;
+}
+
+// Drop items that have been pushed fully off the bottom of the screen.
+function prune() {
+  const bottom = window.innerHeight;
+  for (let li = feed.lastElementChild; li && li.offsetTop > bottom; li = feed.lastElementChild) li.remove();
+}
+
+// FLIP slide: insert at the top, offset the whole list up by the new item's height,
+// then glide back to 0 so everything moves down together and the new item slides in from above.
+function currentOffset() {
+  const t = getComputedStyle(feed).transform;
+  return t && t !== "none" ? new DOMMatrixReadOnly(t).m42 : 0;
+}
+function push(i, animate = true) {
+  const li = make(i);
+  if (!animate) { feed.prepend(li); return; }
+  const from = currentOffset();
+  li.classList.add("enter");
+  feed.prepend(li);
+  const h = li.offsetHeight;
+  feed.style.transition = "none";
+  feed.style.transform = `translateY(${from - h}px)`;
+  feed.offsetHeight; // reflow
+  feed.style.transition = `transform ${SLIDE_MS}ms cubic-bezier(.25,.8,.25,1)`;
+  feed.style.transform = "translateY(0)";
+  li.classList.remove("enter");
+  setTimeout(prune, SLIDE_MS + 50);
+}
+
+// Release queued issues one at a time, spread evenly across the poll interval.
+function drip() {
+  if (queue.length) push(queue.shift());
+  const delay = queue.length ? Math.max(120, Math.min(3000, (interval * 0.95) / queue.length)) : 250;
+  setTimeout(drip, delay);
+}
+drip();
+
+async function poll() {
+  try {
+    const res = await fetch("latest", { cache: "no-store" });
+    const { issues } = await res.json();
+    if (issues) {
+      const fresh = issues.filter((i) => !seen.has(i.id)).reverse(); // oldest first
+      const first = seen.size === 0;
+      for (const i of fresh) seen.add(i.id);
+      if (first) {
+        // Fill the screen straight away on load.
+        for (const i of fresh) push(i, false);
+        prune();
+      } else {
+        queue.push(...fresh);
+        if (queue.length > 300) queue.splice(0, queue.length - 300);
+      }
+      if (seen.size > 20000) { const keep = [...seen].slice(-2000); seen.clear(); keep.forEach((k) => seen.add(k)); }
+    }
+  } catch {}
+  setTimeout(poll, POLL_MS);
+}
+poll();
+</script>
+</body>
+</html>

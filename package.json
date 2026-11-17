@@ -1,0 +1,10 @@
+{
+  "name": "issue-firehose",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8098",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "^4.163.0" }
+}

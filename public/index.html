@@ -18,22 +18,36 @@
   .repo { font-size: 12px; color: #666; font-family: ui-monospace, Menlo, Consolas, monospace; }
   .title { overflow-wrap: anywhere; }
   .li a:hover .title { text-decoration: underline; text-underline-offset: 3px; }
+  .sk { padding: 9px 0; transition: opacity .4s ease; }
+  .sk i { display: block; height: 11px; border-radius: 4px; background: #1a1a1a; animation: pulse 1.6s ease-in-out infinite; }
+  .sk i + i { height: 15px; margin-top: 6px; background: #222; }
+  @keyframes pulse { 50% { opacity: .45; } }
   .corner { position: fixed; right: 16px; z-index: 1; color: #888; font-size: 12px; text-decoration: none;
     font-family: ui-monospace, Menlo, Consolas, monospace; }
-  h1.corner { top: 12px; margin: 0; font-weight: 400; color: #fff; }
+  h1.corner { top: 12px; right: auto; left: 16px; margin: 0; font-weight: 400; color: #fff; }
   a.corner { bottom: 12px; }
   a.corner:hover { color: #fff; }
 </style>
 </head>
 <body>
 <h1 class="corner">Issue Firehose</h1>
-<div id="feed"><div id="list"></div></div>
+<div id="feed"><div id="list"><div id="skeleton"></div></div></div>
 <a class="corner" href="https://github.com/ingoau/issue-firehose" target="_blank" rel="noopener">source code</a>
 <script>
 const feed = document.getElementById("list");
 const SLIDE_MS = 550;
 const queue = [];
 const POLL_MS = 10000;
+
+// Loading skeleton: placeholder rows of varying width until the first issues arrive.
+const skeleton = document.getElementById("skeleton");
+for (let n = 0; n < 24; n++) {
+  const row = document.createElement("div");
+  row.className = "sk";
+  row.style.animationDelay = `${n * 60}ms`;
+  row.innerHTML = `<i style="width:${18 + ((n * 37) % 22)}%;animation-delay:${n * 70}ms"></i><i style="width:${45 + ((n * 53) % 45)}%;animation-delay:${n * 70}ms"></i>`;
+  skeleton.append(row);
+}
 const seen = new Set();
 let interval = POLL_MS;
 
@@ -92,6 +106,7 @@ async function poll() {
       const first = seen.size === 0;
       for (const i of fresh) seen.add(i.id);
       if (first) {
+        skeleton.remove();
         // Fill the screen straight away on load.
         for (const i of fresh) push(i, false);
         prune();

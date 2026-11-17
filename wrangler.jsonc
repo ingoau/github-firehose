@@ -2,5 +2,6 @@
   "name": "issue-firehose",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
-  "assets": { "directory": "./public", "binding": "ASSETS" }
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "routes": [{ "pattern": "firehose.ingo.au", "custom_domain": true }]
 }

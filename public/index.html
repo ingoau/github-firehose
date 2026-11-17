@@ -42,6 +42,10 @@ const queue = [];
 const POLL_MS = 10000;
 const INTRO_GAP_MS = 150; // gap between the first screenful of issues on load
 let introLeft = 0, introTotal = 0;
+const RETRY_MS = 1500; // when a poll brings nothing new (e.g. a still-cached response)
+let pollTimer = null;
+function schedulePoll(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+
 
 // Loading skeleton: placeholder rows of varying width until the first issues arrive.
 const skeleton = document.getElementById("skeleton");
@@ -101,7 +105,7 @@ function drip() {
     if (introLeft === 1) setTimeout(() => skeleton.remove(), 600);
   }
   // Fetch the next batch while the second-to-last opening issue goes in, so it's ready as they finish.
-  if (introLeft === Math.min(2, introTotal)) schedulePoll(0);
+  if (introTotal && introLeft === Math.min(2, introTotal)) schedulePoll(0);
   if (introLeft > 0) { introLeft--; setTimeout(drip, INTRO_GAP_MS * (0.45 + Math.random() * 1.3)); return; }
   if (!queue.length) { setTimeout(drip, 250); return; }
   // Jitter the spacing so arrivals feel organic; the average still matches the incoming rate.
@@ -109,10 +113,6 @@ function drip() {
   setTimeout(drip, Math.max(80, Math.min(4000, even * (0.3 + Math.random() * 1.4))));
 }
 drip();
-
-const RETRY_MS = 1500; // when a poll brings nothing new (e.g. a still-cached response)
-let pollTimer = null;
-function schedulePoll(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
 
 async function poll() {
   let next = RETRY_MS;

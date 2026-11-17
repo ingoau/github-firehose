@@ -23,9 +23,9 @@
   .sk i { display: block; height: 11px; border-radius: 4px; background: #1a1a1a; animation: pulse 1.6s ease-in-out infinite; }
   .sk i + i { height: 15px; margin-top: 6px; background: #222; }
   @keyframes pulse { 50% { opacity: .45; } }
-  .corner { position: fixed; right: 16px; z-index: 1; color: #888; font-size: 12px; text-decoration: none;
+  .corner { position: fixed; right: max(16px, calc((100% - 760px) / 2 + 16px)); z-index: 1; color: #888; font-size: 12px; text-decoration: none;
     font-family: ui-monospace, Menlo, Consolas, monospace; }
-  h1.corner { top: 12px; right: auto; left: 16px; margin: 0; font-weight: 400; color: #fff; }
+  h1.corner { top: 12px; right: auto; left: max(16px, calc((100% - 760px) / 2 + 16px)); margin: 0; font-weight: 400; color: #fff; }
   a.corner { bottom: 12px; }
   a.corner:hover { color: #fff; }
 </style>
@@ -39,6 +39,8 @@ const feed = document.getElementById("list");
 const SLIDE_MS = 550;
 const queue = [];
 const POLL_MS = 10000;
+const INTRO_GAP_MS = 90; // gap between the first screenful of issues on load
+let introLeft = 0;
 
 // Loading skeleton: placeholder rows of varying width until the first issues arrive.
 const skeleton = document.getElementById("skeleton");
@@ -93,6 +95,7 @@ function push(i, animate = true) {
 // Release queued issues one at a time, spread evenly across the poll interval.
 function drip() {
   if (queue.length) push(queue.shift());
+  if (introLeft > 0) { introLeft--; setTimeout(drip, INTRO_GAP_MS); return; }
   const delay = queue.length ? Math.max(120, Math.min(3000, (interval * 0.95) / queue.length)) : 250;
   setTimeout(drip, delay);
 }
@@ -109,7 +112,9 @@ async function poll() {
       if (first) {
         skeleton.remove();
         // Start with roughly a screenful of the newest issues, sliding in like every other issue.
-        queue.push(...fresh.slice(-Math.ceil(window.innerHeight / 45)));
+        const intro = fresh.slice(-Math.ceil(window.innerHeight / 45));
+        queue.push(...intro);
+        introLeft = intro.length;
       } else {
         queue.push(...fresh);
         if (queue.length > 300) queue.splice(0, queue.length - 300);

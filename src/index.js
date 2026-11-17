@@ -1,11 +1,15 @@
 // Issue Firehose: serves the static page and a cached /latest endpoint with the newest public GitHub issues.
-const CACHE_SECONDS = 5;
+const CACHE_SECONDS = 10;
+const PAGES = 2; // 2 x 100 issues ≈ 50s of history, enough for an intro screenful plus a playback buffer
 
-const QUERY = `{ search(query: "is:issue sort:created-desc", type: ISSUE, first: 100) {
-  nodes { ... on Issue { id title url repository { nameWithOwner } } }
-} }`;
+const QUERY = `query ($after: String) {
+  search(query: "is:issue sort:created-desc", type: ISSUE, first: 100, after: $after) {
+    pageInfo { endCursor hasNextPage }
+    nodes { ... on Issue { id title url createdAt repository { nameWithOwner } } }
+  }
+}`;
 
-async function fetchLatest(env) {
+async function fetchPage(env, after) {
   const res = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
@@ -13,13 +17,25 @@ async function fetchLatest(env) {
       "Content-Type": "application/json",
       "User-Agent": "issue-firehose",
     },
-    body: JSON.stringify({ query: QUERY }),
+    body: JSON.stringify({ query: QUERY, variables: { after } }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.errors || !json.data) throw new Error(`GitHub ${res.status}`);
-  return json.data.search.nodes
-    .filter((n) => n.id)
-    .map((n) => ({ id: n.id, title: n.title, url: n.url, repo: n.repository.nameWithOwner }));
+  return json.data.search;
+}
+
+async function fetchLatest(env) {
+  const byId = new Map();
+  let after = null;
+  for (let page = 0; page < PAGES; page++) {
+    const { nodes, pageInfo } = await fetchPage(env, after);
+    for (const n of nodes) {
+      if (n.id) byId.set(n.id, { id: n.id, title: n.title, url: n.url, repo: n.repository.nameWithOwner, createdAt: n.createdAt });
+    }
+    if (!pageInfo.hasNextPage) break;
+    after = pageInfo.endCursor;
+  }
+  return [...byId.values()];
 }
 
 export default {

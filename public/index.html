@@ -38,13 +38,6 @@
 <script>
 const feed = document.getElementById("list");
 const SLIDE_MS = 550;
-const queue = [];
-const POLL_MS = 10000;
-const INTRO_GAP_MS = 150; // gap between the first screenful of issues on load
-let introLeft = 0, introTotal = 0;
-const RETRY_MS = 1500; // when a poll brings nothing new (e.g. a still-cached response)
-let pollTimer = null;
-function schedulePoll(ms) { clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
 
 
 // Loading skeleton: placeholder rows of varying width until the first issues arrive.
@@ -57,7 +50,6 @@ for (let n = 0; n < 24; n++) {
   skeleton.append(row);
 }
 const seen = new Set();
-let interval = POLL_MS;
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -97,48 +89,77 @@ function push(i, animate = true) {
   setTimeout(prune, SLIDE_MS + 50);
 }
 
-// Release queued issues one at a time, spread evenly across the poll interval.
-function drip() {
-  if (queue.length) push(queue.shift());
-  if (introLeft > 0 && skeleton.isConnected) {
-    skeleton.style.opacity = ((introLeft - 1) / introTotal).toFixed(2);
-    if (introLeft === 1) setTimeout(() => skeleton.remove(), 600);
-  }
-  // Fetch the next batch while the second-to-last opening issue goes in, so it's ready as they finish.
-  if (introTotal && introLeft === Math.min(2, introTotal)) schedulePoll(0);
-  if (introLeft > 0) { introLeft--; setTimeout(drip, INTRO_GAP_MS * (0.45 + Math.random() * 1.3)); return; }
-  if (!queue.length) { setTimeout(drip, 250); return; }
-  // Jitter the spacing so arrivals feel organic; the average still matches the incoming rate.
-  const even = (interval * 0.95) / queue.length;
-  setTimeout(drip, Math.max(80, Math.min(4000, even * (0.3 + Math.random() * 1.4))));
+// Playback: issues are replayed at their real creation times, LAG_MS behind GitHub.
+// The first fetch holds ~50s of issues, so there's always a buffer and no pauses between polls.
+const LAG_MS = 25000;
+const POLL_MS = 8000;
+const INTRO_GAP_MS = 150; // gap between the first screenful of issues on load
+const MIN_GAP_MS = 90;    // never release two issues closer together than this
+const MAX_BACKLOG = 12;   // if the tab was hidden, skip ahead rather than burst through everything
+
+const queue = [];         // { issue, t } sorted by t (ms)
+let intro = [], introTotal = 0;
+let clock = null;         // playhead = clock.base + (performance.now() - clock.start)
+const playhead = () => (clock?.start != null ? clock.base + (performance.now() - clock.start) : -Infinity);
+
+function enqueue(issues) {
+  // createdAt is per-second; spread issues randomly within their second.
+  for (const issue of issues) queue.push({ issue, t: Date.parse(issue.createdAt) + Math.random() * 1000 });
+  queue.sort((a, b) => a.t - b.t);
 }
-drip();
+
+function tick() {
+  if (intro.length) {
+    push(intro.shift());
+    skeleton.style.opacity = (intro.length / introTotal).toFixed(2);
+    if (!intro.length) {
+      setTimeout(() => skeleton.remove(), 600);
+      clock.start = performance.now(); // start real-time playback right as the intro finishes
+    }
+    setTimeout(tick, INTRO_GAP_MS * (0.45 + Math.random() * 1.3));
+    return;
+  }
+  const now = playhead();
+  let due = 0;
+  while (due < queue.length && queue[due].t <= now) due++;
+  if (due > MAX_BACKLOG) queue.splice(0, due - MAX_BACKLOG);
+  if (due) {
+    push(queue.shift().issue);
+    setTimeout(tick, MIN_GAP_MS);
+    return;
+  }
+  const wait = queue.length && Number.isFinite(now) ? queue[0].t - now : 250;
+  setTimeout(tick, Math.max(16, Math.min(250, wait)));
+}
+tick();
 
 async function poll() {
-  let next = RETRY_MS;
   try {
     const res = await fetch("latest", { cache: "no-store" });
     const { issues } = await res.json();
     if (issues) {
-      const fresh = issues.filter((i) => !seen.has(i.id)).reverse(); // oldest first
-      const first = seen.size === 0;
+      const fresh = issues.filter((i) => !seen.has(i.id));
       for (const i of fresh) seen.add(i.id);
-      if (first) {
-        // Start with roughly a screenful of the newest issues, sliding in like every other issue.
-        const intro = fresh.slice(-Math.ceil(window.innerHeight / 45));
-        queue.push(...intro);
-        introLeft = introTotal = intro.length;
-        // The next poll is fired from drip() just before the opening issues finish.
-        next = intro.length ? null : RETRY_MS;
-      } else {
-        queue.push(...fresh);
-        next = fresh.length ? POLL_MS : RETRY_MS;
-        if (queue.length > 300) queue.splice(0, queue.length - 300);
+      if (!clock && fresh.length) {
+        // First load: everything older than (newest - LAG) is history. Its newest screenful
+        // becomes the intro; the rest of the batch is the playback buffer.
+        const newest = Math.max(...fresh.map((i) => Date.parse(i.createdAt)));
+        const cut = newest - LAG_MS;
+        const old = fresh.filter((i) => Date.parse(i.createdAt) <= cut)
+          .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+        intro = old.slice(-Math.ceil(window.innerHeight / 45));
+        introTotal = intro.length;
+        enqueue(fresh.filter((i) => Date.parse(i.createdAt) > cut));
+        clock = { base: cut, start: intro.length ? null : performance.now() };
+        if (!intro.length) skeleton.remove();
+      } else if (clock) {
+        // Drop anything that arrives after its slot has long passed (e.g. slow search indexing).
+        enqueue(fresh.filter((i) => Date.parse(i.createdAt) + 1000 > playhead() - 2000));
       }
       if (seen.size > 20000) { const keep = [...seen].slice(-2000); seen.clear(); keep.forEach((k) => seen.add(k)); }
     }
   } catch {}
-  if (next !== null) schedulePoll(next);
+  setTimeout(poll, clock ? POLL_MS : 1500);
 }
 poll();
 </script>

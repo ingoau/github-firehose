@@ -1,5 +1,5 @@
 {
-  "name": "issue-firehose",
+  "name": "github-firehose",
   "private": true,
   "type": "module",
   "scripts": {

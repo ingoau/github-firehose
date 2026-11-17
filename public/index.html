@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Issue Firehose</title>
+<title>GitHub Firehose</title>
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: #fff; }
@@ -28,15 +28,27 @@
     font-family: ui-monospace, Menlo, Consolas, monospace; }
   h1.corner { top: 12px; right: auto; left: max(16px, calc((100% - 760px) / 2 + 16px)); margin: 0; font-weight: 400; color: #fff; }
   a.corner { bottom: 12px; }
+  nav.corner { top: 12px; display: flex; gap: 14px; }
+  nav.corner a { color: #666; text-decoration: none; }
+  nav.corner a:hover, nav.corner a[aria-current="page"] { color: #fff; }
   a.corner:hover { color: #fff; }
 </style>
 </head>
 <body>
-<h1 class="corner">Issue Firehose</h1>
+<h1 class="corner">GitHub Firehose</h1>
+<nav class="corner">
+  <a href="/">Issues</a>
+  <a href="/pulls">Pull requests</a>
+</nav>
 <div id="feed"><div id="list"><div id="skeleton"></div></div></div>
-<a class="corner" href="https://github.com/ingoau/issue-firehose" target="_blank" rel="noopener">source code</a>
+<a class="corner" href="https://github.com/ingoau/github-firehose" target="_blank" rel="noopener">source code</a>
 <script>
 const feed = document.getElementById("list");
+// Which feed: /pulls shows pull requests, anything else shows issues.
+const TYPE = location.pathname.replace(/\/+$/, "") === "/pulls" ? "pulls" : "issues";
+for (const a of document.querySelectorAll("nav.corner a")) {
+  if ((a.getAttribute("href") === "/pulls") === (TYPE === "pulls")) a.setAttribute("aria-current", "page");
+}
 const SLIDE_MS = 550;
 
 
@@ -89,13 +101,19 @@ function push(i, animate = true) {
   setTimeout(prune, SLIDE_MS + 50);
 }
 
-// Playback: issues are replayed at their real creation times, LAG_MS behind GitHub.
-// The first fetch holds ~50s of issues, so there's always a buffer and no pauses between polls.
+// Playback: items are replayed at their real creation times, LAG_MS behind GitHub.
+// The first fetch holds ~40-50s of items, so there's always a buffer and no pauses between polls.
+// When a feed is too busy to show everything (pull requests run at 10+/s), it switches to sampled
+// mode instead: a small pool of the newest items, released at SAMPLE_RATE with random spacing.
 const LAG_MS = 25000;
 const POLL_MS = 8000;
 const INTRO_GAP_MS = 150; // gap between the first screenful of issues on load
 const MIN_GAP_MS = 90;    // never release two issues closer together than this
 const MAX_BACKLOG = 12;   // if the tab was hidden, skip ahead rather than burst through everything
+const SAMPLE_ABOVE = 6;   // items/s; busier feeds are sampled rather than replayed in full
+const SAMPLE_RATE = 4;    // items/s shown in sampled mode
+const SAMPLE_POOL = 100;  // newest items kept waiting in sampled mode (~25s at SAMPLE_RATE, outlasting cache + poll)
+let sampled = false;
 
 const queue = [];         // { issue, t } sorted by t (ms)
 let intro = [], introTotal = 0;
@@ -119,6 +137,11 @@ function tick() {
     setTimeout(tick, INTRO_GAP_MS * (0.45 + Math.random() * 1.3));
     return;
   }
+  if (sampled) {
+    if (queue.length) push(queue.shift().issue);
+    setTimeout(tick, queue.length ? (1000 / SAMPLE_RATE) * (0.3 + Math.random() * 1.4) : 250);
+    return;
+  }
   const now = playhead();
   let due = 0;
   while (due < queue.length && queue[due].t <= now) due++;
@@ -135,7 +158,7 @@ tick();
 
 async function poll() {
   try {
-    const res = await fetch("latest", { cache: "no-store" });
+    const res = await fetch(`/latest?type=${TYPE}`, { cache: "no-store" });
     const { issues } = await res.json();
     if (issues) {
       const fresh = issues.filter((i) => !seen.has(i.id));
@@ -143,8 +166,13 @@ async function poll() {
       if (!clock && fresh.length) {
         // First load: everything older than (newest - LAG) is history. Its newest screenful
         // becomes the intro; the rest of the batch is the playback buffer.
-        const newest = Math.max(...fresh.map((i) => Date.parse(i.createdAt)));
-        const cut = newest - LAG_MS;
+        const times = fresh.map((i) => Date.parse(i.createdAt));
+        const newest = Math.max(...times);
+        const span = (newest - Math.min(...times)) / 1000;
+        sampled = fresh.length / Math.max(1, span) > SAMPLE_ABOVE;
+        const cut = sampled
+          ? Date.parse([...fresh].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).at(-SAMPLE_POOL)?.createdAt ?? newest)
+          : newest - LAG_MS;
         const old = fresh.filter((i) => Date.parse(i.createdAt) <= cut)
           .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
         intro = old.slice(-Math.ceil(window.innerHeight / 45));
@@ -152,6 +180,9 @@ async function poll() {
         enqueue(fresh.filter((i) => Date.parse(i.createdAt) > cut));
         clock = { base: cut, start: intro.length ? null : performance.now() };
         if (!intro.length) skeleton.remove();
+      } else if (clock && sampled) {
+        enqueue(fresh);
+        if (queue.length > SAMPLE_POOL) queue.splice(0, queue.length - SAMPLE_POOL); // keep the newest
       } else if (clock) {
         // Drop anything that arrives after its slot has long passed (e.g. slow search indexing).
         enqueue(fresh.filter((i) => Date.parse(i.createdAt) + 1000 > playhead() - 2000));
